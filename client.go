@@ -361,7 +361,7 @@ func (c *Client) once(ctx context.Context, method, target string, payload []byte
 	}
 
 	if resp.StatusCode >= 400 {
-		return resp.StatusCode, retryAfterOf(resp), parseAPIError(resp.StatusCode, raw, resp)
+		return resp.StatusCode, retryAfterOf(resp), redactAPIError(parseAPIError(resp.StatusCode, raw, resp), c.token)
 	}
 
 	if out != nil {
@@ -415,6 +415,41 @@ func parseAPIError(status int, raw []byte, resp *http.Response) error {
 
 	// A proxy or a crash answered with something that is not the API's JSON: say what it was, not what it said.
 	apiErr.Message = http.StatusText(status) + " (not an answer from the CommyPanel API)"
+
+	return apiErr
+}
+
+// redactAPIError takes the token out of what the panel said. A misbehaving (or impersonated) server could
+// echo the Authorization header into its error text, and that text goes to the caller's logs.
+func redactAPIError(err error, token string) error {
+	apiErr, ok := err.(*APIError)
+	if !ok || token == "" {
+		return err
+	}
+
+	clean := func(s string) string { return strings.ReplaceAll(s, token, "[redacted]") }
+
+	apiErr.Message = clean(apiErr.Message)
+
+	for name, sentences := range apiErr.Fields {
+		for i := range sentences {
+			sentences[i] = clean(sentences[i])
+		}
+
+		apiErr.Fields[clean(name)] = sentences
+	}
+
+	if d := apiErr.Deployment; d != nil {
+		if d.Error != nil {
+			e := clean(*d.Error)
+			d.Error = &e
+		}
+
+		if d.CommitMessage != nil {
+			m := clean(*d.CommitMessage)
+			d.CommitMessage = &m
+		}
+	}
 
 	return apiErr
 }

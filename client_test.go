@@ -455,3 +455,28 @@ func TestACustomHTTPClientStillNeverFollowsRedirects(t *testing.T) {
 		t.Errorf("err %v, other address saw %d", err, len(elsewhere.seen()))
 	}
 }
+
+func TestAServerThatEchoesTheTokenInItsErrorDoesNotGetItIntoOurs(t *testing.T) {
+	echo := "Invalid header: Authorization: Bearer " + testToken
+	panel := newPanel(t, jsonReply(422, `{"error":"`+echo+`","errors":{"value":["`+echo+`"]},"deployment":{"number":1,"status":"building","error":"`+echo+`","commit_message":"`+echo+`"}}`))
+
+	_, _, err := panel.client(t, WithRetries(0)).SetEnv(context.Background(), "shop", "KEY", "v")
+
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("err = %v", err)
+	}
+
+	shown := fmt.Sprintf("%v %+v %#v %s %v", err, apiErr, apiErr.Fields, apiErr.Message, apiErr.Fields)
+	if apiErr.Deployment != nil {
+		shown += *apiErr.Deployment.Error + *apiErr.Deployment.CommitMessage
+	}
+
+	if strings.Contains(shown, "secretsecret") {
+		t.Errorf("the token is in what the panel said, and so in our error: %s", shown)
+	}
+
+	if !strings.Contains(apiErr.Message, "[redacted]") {
+		t.Errorf("message = %q", apiErr.Message)
+	}
+}
